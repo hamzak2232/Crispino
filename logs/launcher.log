@@ -1,0 +1,29 @@
+[2025-08-16 03:13:50] Failed to import app.main:
+[2025-08-16 03:13:50] Traceback (most recent call last):
+  File "/home/runner/work/Crispino/Crispino/scripts/launch.pyw", line 79, in run_server
+    from app.main import app as asgi_app  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/Crispino/Crispino/app/main.py", line 43, in <module>
+    @app.post("/checkout")
+     ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/Crispino/Crispino/test_env/lib/python3.12/site-packages/fastapi/routing.py", line 995, in decorator
+    self.add_api_route(
+  File "/home/runner/work/Crispino/Crispino/test_env/lib/python3.12/site-packages/fastapi/routing.py", line 934, in add_api_route
+    route = route_class(
+            ^^^^^^^^^^^^
+  File "/home/runner/work/Crispino/Crispino/test_env/lib/python3.12/site-packages/fastapi/routing.py", line 555, in __init__
+    self.dependant = get_dependant(path=self.path_format, call=self.endpoint)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/Crispino/Crispino/test_env/lib/python3.12/site-packages/fastapi/dependencies/utils.py", line 285, in get_dependant
+    param_details = analyze_param(
+                    ^^^^^^^^^^^^^^
+  File "/home/runner/work/Crispino/Crispino/test_env/lib/python3.12/site-packages/fastapi/dependencies/utils.py", line 482, in analyze_param
+    ensure_multipart_is_installed()
+  File "/home/runner/work/Crispino/Crispino/test_env/lib/python3.12/site-packages/fastapi/dependencies/utils.py", line 115, in ensure_multipart_is_installed
+    raise RuntimeError(multipart_not_installed_error) from None
+RuntimeError: Form data requires "python-multipart" to be installed. 
+You can install "python-multipart" with: 
+
+pip install python-multipart
+
+
