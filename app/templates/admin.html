@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Admin</h2>
+
+{% if error %}
+  <div style="background:#fff3cd;border:1px solid #ffeeba;color:#856404;padding:8px;border-radius:6px;margin-bottom:10px;">
+    {{ error }}
+  </div>
+{% endif %}
+
+<section class="admin-section">
+  <h3>Settings</h3>
+  <form method="post" action="/admin/settings" class="form-grid">
+    <label>Cafe name</label>
+    <input type="text" name="cafe_name" value="{{ cafe_name }}">
+    <label>Tax rate (%)</label>
+    <input type="number" name="tax_rate_percent" value="{{ tax_rate }}" step="0.01" min="0">
+    <button type="submit" class="primary">Save</button>
+  </form>
+</section>
+
+<section class="admin-section">
+  <h3>Categories</h3>
+  <ul>
+    {% for c in categories %}
+      <li>
+        #{{ c["id"] }} - {{ c["name"] }} (order {{ c["sort_order"] }}, items: {{ c["item_count"] }})
+        <form method="post" action="/admin/category/delete" style="display:inline;" onsubmit="return confirm('Delete category {{ c['name'] }}? This is only allowed if it has no items.');">
+          <input type="hidden" name="category_id" value="{{ c['id'] }}">
+          <button type="submit" {% if c["item_count"] > 0 %}disabled title="Remove or move items first"{% endif %}>Delete</button>
+        </form>
+      </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/admin/category/new" class="form-grid">
+    <input type="text" name="name" placeholder="New category name (unique)" required>
+    <input type="number" name="sort_order" placeholder="auto (end)">
+    <button type="submit">Add</button>
+  </form>
+  <small style="color:#666;">Category names must be unique (case-insensitive). Leave Sort blank to append at the end.</small>
+</section>
+
+<section class="admin-section">
+  <h3 style="display:flex;align-items:center;gap:10px;">
+    <span>Items</span>
+    <form method="post" action="/admin/renumber" style="margin-left:auto;">
+      <button type="submit" title="Compact IDs to 1..N by current order">Renumber IDs</button>
+    </form>
+  </h3>
+  <table class="items-table">
+    <thead>
+      <tr><th>ID</th><th>Name</th><th>Price (Rs)</th><th>Category</th><th>Avail</th><th>Sort</th><th>Save</th><th>Delete</th></tr>
+    </thead>
+    <tbody>
+      {% for i in items %}
+      <tr>
+        <form method="post" action="/admin/item/update">
+          <td>{{ i["id"] }}<input type="hidden" name="item_id" value="{{ i['id'] }}"></td>
+          <td><input type="text" name="name" value="{{ i['name'] }}" required></td>
+          <td><input type="number" name="price_rupees" value="{{ '%.2f' % (i['price_cents']/100) }}" step="0.01"></td>
+          <td>
+            <select name="category_id">
+              {% for c in categories %}
+                <option value="{{ c['id'] }}" {% if c['id'] == i['category_id'] %}selected{% endif %}>{{ c["name"] }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <select name="available">
+              <option value="1" {% if i['available'] %}selected{% endif %}>Yes</option>
+              <option value="0" {% if not i['available'] %}selected{% endif %}>No</option>
+            </select>
+          </td>
+          <td><input type="number" name="sort_order" value="{{ i['sort_order'] }}"></td>
+          <td><button type="submit">Save</button></td>
+        </form>
+        <td>
+          <form method="post" action="/admin/item/delete" onsubmit="return confirm('Delete item {{ i['name'] }}?');">
+            <input type="hidden" name="item_id" value="{{ i['id'] }}">
+            <button type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <form method="post" action="/admin/item/new">
+          <td>New</td>
+          <td><input type="text" name="name" placeholder="Item name (unique within category)" required></td>
+          <td><input type="number" name="price_rupees" placeholder="e.g., 280.00" required step="0.01"></td>
+          <td>
+            <select name="category_id">
+              {% for c in categories %}
+                <option value="{{ c['id'] }}">{{ c["name"] }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <select name="available">
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </td>
+          <td><input type="number" name="sort_order" placeholder="auto (end)"></td>
+          <td><button type="submit" class="primary">Add</button></td>
+          <td></td>
+        </form>
+      </tr>
+    </tbody>
+  </table>
+  <small style="color:#666;">Item names must be unique within a category (case-insensitive). Leave Sort blank to append at the end.</small>
+</section>
+{% endblock %}

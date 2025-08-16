@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="pos">
+  <div class="pos-left">
+    <div class="pos-toolbar">
+      <div class="tabs" role="tablist">
+        {% for cat, items in menu.items() if items %}
+          <button class="tab" role="tab" data-cat="{{ cat }}">{{ cat }}</button>
+        {% endfor %}
+      </div>
+      <div class="search-wrap">
+        <input type="search" id="search" placeholder="Search items…" autocomplete="off" />
+      </div>
+    </div>
+
+    {% for cat, items in menu.items() if items %}
+      <div class="items-grid" data-cat="{{ cat }}" hidden>
+        {% for i in items %}
+          <button class="card item-btn"
+                  title="{{ i.name }}"
+                  data-id="{{ i.id }}"
+                  data-name="{{ i.name }}"
+                  data-price="{{ i.price_cents }}"
+                  data-cat="{{ i.category }}">
+            <div class="card-title">{{ i.name }}</div>
+            <div class="card-price">Rs {{ ('%.2f' % (i.price_cents/100)) }}</div>
+          </button>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    {% if menu|length == 0 %}
+      <div class="empty">No items available. Add items in Admin.</div>
+    {% endif %}
+  </div>
+
+  <div class="pos-right">
+    <h2 class="panel-title">Order</h2>
+    <div id="cart" class="cart"></div>
+
+    <div class="order-note">
+      <label for="note">Note</label>
+      <input type="text" id="note" placeholder="e.g., no sugar" />
+    </div>
+
+    <div class="totals">
+      <div class="row"><span>Subtotal</span><strong id="subtotal">Rs 0.00</strong></div>
+      <div class="row"><span>Tax ({{ '%.2f' % tax_rate }}%)</span><strong id="tax">Rs 0.00</strong></div>
+      <div class="row total"><span>Total</span><strong id="total">Rs 0.00</strong></div>
+      <div class="row change" id="changeRow" hidden><span>Change</span><strong id="change">Rs 0.00</strong></div>
+    </div>
+
+    <div class="payment">
+      <label for="payment_method">Payment</label>
+      <select id="payment_method">
+        <option value="cash">Cash</option>
+        <option value="card">Card</option>
+        <option value="other">Other</option>
+      </select>
+
+      <div id="cashWrap">
+        <label for="cash_received">Cash Received (Rs)</label>
+        <input type="number" id="cash_received" value="" min="0" step="0.01" inputmode="decimal" />
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="clear">Clear</button>
+      <button id="checkout" class="primary">Place Order & Print</button>
+    </div>
+
+    <form id="checkout_form" method="post" action="/checkout" hidden>
+      <input type="hidden" name="cart_json" id="cart_json">
+      <input type="hidden" name="payment_method" id="form_payment_method">
+      <input type="hidden" name="cash_received" id="form_cash_received">
+      <input type="hidden" name="note" id="form_note">
+    </form>
+  </div>
+</section>
+
+<script>
+  const TAX_RATE = {{ '%.4f' % tax_rate }};
+</script>
+<script src="/static/pos.js"></script>
+{% endblock %}

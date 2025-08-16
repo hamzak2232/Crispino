@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>{{ cafe_name }} - Order #{{ order.number }} (Kitchen)</title>
+  <style>
+    body { font-family: monospace; margin: 10px; }
+    .center { text-align: center; }
+    .line { display: flex; justify-content: space-between; }
+    .bold { font-weight: bold; }
+    hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
+  </style>
+  <script>
+    function goBack() {
+      const params = new URLSearchParams(window.location.search);
+      const back = params.get('back') || '/';
+      window.location.href = back;
+    }
+    window.onload = function() { window.print(); };
+    window.onafterprint = goBack;
+  </script>
+</head>
+<body>
+  <div class="center bold">{{ cafe_name }}</div>
+  <div class="center">Order #{{ order.number }}</div>
+  <div class="center">{{ order.created_at }}</div>
+  <hr>
+  {% for it in items %}
+  <div class="line">
+    <div>{{ it['qty'] }} x {{ it['name'] }}</div>
+  </div>
+  {% endfor %}
+  <hr>
+  <div>Note: {{ order.note }}</div>
+</body>
+</html>

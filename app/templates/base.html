@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ cafe_name if cafe_name else "Crispino Cafe" }}</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/app.css" />
+  <script>
+    // Light/Dark theme preference
+    (function() {
+      const saved = localStorage.getItem('theme') || 'light';
+      if (saved === 'dark') document.documentElement.classList.add('dark');
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/static/logo.svg" alt="Logo" />
+      <span>{{ cafe_name if cafe_name else "Crispino Cafe" }}</span>
+    </div>
+    <nav class="topnav">
+      <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">POS</a>
+      <a href="/admin" class="{{ 'active' if request.url.path.startswith('/admin') else '' }}">Admin</a>
+    </nav>
+    <div class="top-actions">
+      <button id="themeToggle" title="Toggle theme">🌓</button>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <div>Local POS • {{ cafe_name if cafe_name else "Crispino Cafe" }}</div>
+    <div id="clock"></div>
+  </footer>
+
+  <script>
+    document.getElementById('themeToggle')?.addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+    });
+    function tickClock() {
+      const el = document.getElementById('clock');
+      if (!el) return;
+      const d = new Date();
+      const pad = n => String(n).padStart(2,'0');
+      el.textContent = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    setInterval(tickClock, 1000);
+    tickClock();
+  </script>
+</body>
+</html>

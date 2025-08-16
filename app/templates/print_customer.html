@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>{{ cafe_name }} - Order #{{ order.number }} (Customer)</title>
+  <style>
+    body { font-family: monospace; margin: 10px; }
+    .center { text-align: center; }
+    .line { display: flex; justify-content: space-between; }
+    .bold { font-weight: bold; }
+    hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
+  </style>
+  <script>
+    function goNext() {
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get('next');
+      const back = params.get('back') || '/';
+      if (next) window.location.href = next;
+      else window.location.href = back;
+    }
+    window.onload = function() { window.print(); };
+    window.onafterprint = goNext;
+  </script>
+</head>
+<body>
+  <div class="center bold">{{ cafe_name }}</div>
+  <div class="center">Order #{{ order.number }}</div>
+  <div class="center">{{ order.created_at }}</div>
+  <hr>
+  {% for it in items %}
+  <div class="line">
+    <div>{{ it['qty'] }} x {{ it['name'] }}</div>
+    <div>Rs {{ '%.2f' % (it['unit_price_cents'] * it['qty'] / 100) }}</div>
+  </div>
+  {% endfor %}
+  <hr>
+  <div class="line"><div>Tax</div><div>Rs {{ '%.2f' % (order.tax_cents / 100) }}</div></div>
+  <div class="line bold"><div>Total</div><div>Rs {{ '%.2f' % (order.total_cents / 100) }}</div></div>
+  {% if order.payment_method == 'cash' %}
+  <div>Paid: Rs {{ '%.2f' % (order.paid_cents / 100) }}</div>
+  <div>Change: Rs {{ '%.2f' % ((order.paid_cents - order.total_cents)/100) }}</div>
+  {% else %}
+  <div>Payment: {{ order.payment_method|capitalize }}</div>
+  {% endif %}
+  {% if order.note %}<hr><div>Note: {{ order.note }}</div>{% endif %}
+  <hr>
+  <div class="center">Thank you!</div>
+</body>
+</html>

@@ -1,0 +1,1 @@
+# Mark app as a package so `from app.main import app` works reliably in frozen builds.
