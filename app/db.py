@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Import sqlite3 with fallback for frozen builds
+try:
+    import sqlite3
+except ImportError:
+    # Fallback for some PyInstaller builds where sqlite3 is not bundled
+    try:
+        import pysqlite3 as sqlite3  # type: ignore
+    except ImportError:
+        raise ImportError(
+            "SQLite3 is not available. Please ensure sqlite3 or pysqlite3 is installed."
+        )
 
 # Resolve a writable data directory:
 # - Dev: <repo-root>/data

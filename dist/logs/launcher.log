@@ -7,3 +7,4 @@
     import sqlite3
 ModuleNotFoundError: No module named 'sqlite3'
 
+[2025-08-16 03:18:52] Starting server on http://127.0.0.1:8000/
