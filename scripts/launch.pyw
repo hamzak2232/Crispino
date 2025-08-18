@@ -1,183 +1,108 @@
-# Robust windowed launcher for the packaged POS.
-# - Imports the ASGI app object directly (no dotted string).
-# - Chooses a free port if 8000 is busy.
-# - Logs errors to logs/launcher.log next to the EXE (and prints in console builds).
-# - Opens the browser when the server is ready.
-
-import threading
-import time
-import webbrowser
-import socket
+import os
 import sys
-import traceback
-from pathlib import Path
+import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
 
-# Eager imports so PyInstaller collects these packages
-import uvicorn  # runtime server
-import fastapi  # ensure bundled
-import starlette  # ensure bundled
-import jinja2  # ensure bundled
+def ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-HOST = "127.0.0.1"
-START_PORT = 8000
-MAX_PORT = 8010  # try up to this port if 8000 is busy
-
-
-def base_dir() -> Path:
+def setup_paths() -> str:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
-
-
-LOG_DIR = base_dir() / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / "launcher.log"
-
-
-def log(msg: str) -> None:
-    # Write to file and to console (useful for console builds)
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if base_dir not in sys.path:
+        sys.path.insert(0, base_dir)
     try:
-        with LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        os.chdir(base_dir)
     except Exception:
         pass
+    return base_dir
+
+def setup_logging(base_dir: str) -> logging.Logger:
+    logs_dir = os.path.join(base_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_path = os.path.join(logs_dir, "runtime.log")
+
+    logger = logging.getLogger("launcher")
+    logger.setLevel(logging.INFO)
+    logger.handlers[:] = []
+
+    fmt = logging.Formatter("%(message)s")
+
+    fh = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.INFO)
+    logger.addHandler(fh)
+
     try:
-        print(line, flush=True)
+        ch = logging.StreamHandler(stream=sys.stdout)
+        ch.setFormatter(fmt)
+        ch.setLevel(logging.INFO)
+        logger.addHandler(ch)
     except Exception:
         pass
 
+    return logger
 
-def log_exc(prefix: str, e: BaseException) -> None:
-    tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-    log(prefix)
-    log(tb)
+def main() -> int:
+    base_dir = setup_paths()
+    logger = setup_logging(base_dir)
+    def log(msg: str) -> None:
+        logger.info(f"[{ts()}] {msg}")
 
-
-def is_port_open(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.25)
-        return s.connect_ex((host, port)) == 0
-
-
-def find_free_port(host: str, start: int, end: int) -> int:
-    for p in range(start, end + 1):
-        if not is_port_open(host, p):
-            return p
-    raise RuntimeError(f"No free port between {start} and {end}")
-
-
-def run_server(server_holder: dict):
     try:
-        # Ensure the unpacked resources (app/ templates/static) are importable when frozen
-        here = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))  # type: ignore[attr-defined]
-        sys.path.insert(0, str(here))
-        sys.path.insert(0, str(base_dir()))
-
-        # Import ASGI app directly
+        from app.main import app as fastapi_app
+    except Exception as e:
+        log(f"Failed to import app.main: {e}")
         try:
-            from app.main import app as asgi_app  # type: ignore
-        except Exception as e:
-            log_exc("Failed to import app.main:", e)
-            server_holder["error"] = f"Import error: {e}"
-            return
+            import traceback
+            tb = "".join(traceback.format_exc())
+            for line in tb.rstrip().splitlines():
+                logger.info(line)
+        except Exception:
+            pass
+        return 1
 
-        port = find_free_port(HOST, START_PORT, MAX_PORT)
-        server_holder["port"] = port
+    try:
+        import uvicorn
+    except Exception as e:
+        log(f"Failed to import uvicorn: {e}")
+        return 1
 
-        config = uvicorn.Config(
-            asgi_app,
-            host=HOST,
+    host = os.getenv("HOST", "127.0.0.1")
+    try:
+        port = int(os.getenv("PORT", "8000"))
+    except ValueError:
+        port = 8000
+
+    log(f"Starting server on http://{host}:{port}")
+    try:
+        uvicorn.run(
+            fastapi_app,
+            host=host,
             port=port,
             reload=False,
-            log_level="info",
+            log_level=os.getenv("LOG_LEVEL", "info"),
+            log_config=None,          # critical for frozen apps
+            access_log=False          # optional: avoid access log formatter
         )
-        server = uvicorn.Server(config)
-        server_holder["server"] = server
-        log(f"Starting server on http://{HOST}:{port}/")
-        server.run()
-        log("Server stopped.")
+    except KeyboardInterrupt:
+        log("Shutting down (KeyboardInterrupt)")
     except Exception as e:
-        log_exc("Server thread crashed:", e)
-        server_holder["error"] = str(e)
-
-
-def main():
-    # Try to show a tiny GUI; fall back to headless if Tk not available
-    try:
-        import tkinter as tk
-    except Exception:
-        server_holder = {}
-        t = threading.Thread(target=run_server, args=(server_holder,), daemon=True)
-        t.start()
-        # Wait for server or error
-        for _ in range(120):
-            if "error" in server_holder:
-                break
-            port = server_holder.get("port")
-            if port and is_port_open(HOST, port):
-                webbrowser.open_new_tab(f"http://{HOST}:{port}/")
-                break
-            time.sleep(0.25)
-        # Keep process alive while server runs
+        log(f"Server crashed: {e}")
         try:
-            while t.is_alive():
-                time.sleep(0.25)
-        except KeyboardInterrupt:
-            if server_holder.get("server"):
-                server_holder["server"].should_exit = True
-        return
+            import traceback
+            tb = "".join(traceback.format_exc())
+            for line in tb.rstrip().splitlines():
+                logger.info(line)
+        except Exception:
+            pass
+        return 1
 
-    root = tk.Tk()
-    root.title("Crispino POS")
-    root.geometry("420x160")
-    root.resizable(False, False)
-
-    status_var = tk.StringVar(value="Starting server...")
-    tk.Label(root, textvariable=status_var, padx=10, pady=10, justify="left").pack(anchor="w")
-
-    btns = tk.Frame(root)
-    open_btn = tk.Button(btns, text="Open POS", width=12, state="disabled")
-    quit_btn = tk.Button(btns, text="Quit", width=12, command=root.destroy)
-    open_btn.pack(side=tk.LEFT, padx=6)
-    quit_btn.pack(side=tk.LEFT, padx=6)
-    btns.pack(pady=8)
-
-    server_holder = {}
-    t = threading.Thread(target=run_server, args=(server_holder,), daemon=True)
-    t.start()
-
-    def poll():
-        if "error" in server_holder:
-            status_var.set(f"Error starting server.\nSee {LOG_FILE}\n\n{server_holder['error']}")
-            open_btn.config(state="disabled")
-            return
-        port = server_holder.get("port")
-        if port and is_port_open(HOST, port):
-            status_var.set(f"Server running on http://{HOST}:{port}/")
-            open_btn.config(state="normal")
-            # Auto-open once
-            if not getattr(poll, "_opened", False):
-                webbrowser.open_new_tab(f"http://{HOST}:{port}/")
-                poll._opened = True
-        root.after(300, poll)
-
-    def open_pos():
-        port = server_holder.get("port", START_PORT)
-        webbrowser.open_new_tab(f"http://{HOST}:{port}/")
-
-    open_btn.config(command=open_pos)
-    root.after(200, poll)
-
-    def on_close():
-        srv = server_holder.get("server")
-        if srv:
-            srv.should_exit = True
-        root.after(200, root.quit)
-
-    root.protocol("WM_DELETE_WINDOW", on_close)
-    root.mainloop()
-
+    log("Server stopped")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

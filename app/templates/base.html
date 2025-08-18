@@ -4,8 +4,104 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ cafe_name if cafe_name else "Crispino Cafe" }}</title>
+
+  <!-- Fresh session each launch: clear persisted cart/order the first time this app runs per session.
+       Keeps only harmless preferences like theme. Runs before any other scripts. -->
+  <script id="session-reset">
+    (function () {
+      try {
+        if (!sessionStorage.getItem("posSessionStarted")) {
+          // Keep only UI preferences
+          const keep = new Set(["theme", "colorMode", "color-scheme"]);
+
+          // Remove everything else from localStorage
+          const toRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!keep.has(k)) toRemove.push(k);
+          }
+          toRemove.forEach((k) => {
+            try { localStorage.removeItem(k); } catch (_) {}
+          });
+
+          // Clear common draft/order keys from both storages
+          const orderKeys = [
+            "cart", "order", "orderItems", "currentOrder",
+            "pos:cart", "pos:orderDraft", "pos:currentOrder",
+            "pos_cart", "pos_order", "draftOrder"
+          ];
+          orderKeys.forEach((k) => {
+            try { localStorage.removeItem(k); } catch (_) {}
+            try { sessionStorage.removeItem(k); } catch (_) {}
+          });
+
+          // Best-effort: clear cookies that look like cart/order
+          try {
+            document.cookie.split(";").forEach((chunk) => {
+              const name = chunk.split("=")[0].trim();
+              if (/cart|order/i.test(name)) {
+                document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+              }
+            });
+          } catch (_) {}
+
+          sessionStorage.setItem("posSessionStarted", new Date().toISOString());
+        }
+      } catch (e) {
+        // ignore storage/cookie errors
+      }
+    })();
+  </script>
+
   <link rel="icon" href="/static/logo.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/app.css" />
+
+  <!-- High-contrast button/text overrides for dark theme (html.dark is toggled by our theme script) -->
+  <style id="contrast-overrides">
+    /* Generic buttons */
+    html.dark .btn,
+    html.dark button,
+    html.dark .button {
+      color: #ffffff !important;
+    }
+
+    /* Common variants that may render dark-on-dark */
+    html.dark .btn-primary,
+    html.dark .btn-secondary,
+    html.dark .btn-accent,
+    html.dark .btn-neutral,
+    html.dark .btn-info,
+    html.dark .btn-success,
+    html.dark .btn-warning,
+    html.dark .btn-error {
+      color: #ffffff !important;
+    }
+
+    /* Outline and ghost */
+    html.dark .btn-outline,
+    html.dark .btn.btn-outline {
+      color: #ffffff !important;
+      border-color: rgba(255, 255, 255, 0.55) !important;
+    }
+    html.dark .btn-ghost {
+      color: #ffffff !important;
+    }
+
+    /* Disabled buttons still readable */
+    html.dark .btn:disabled,
+    html.dark button:disabled {
+      color: rgba(255, 255, 255, 0.7) !important;
+    }
+
+    /* Small pills/tabs/badges used for category selectors */
+    html.dark .tab,
+    html.dark .badge,
+    html.dark .chip,
+    html.dark .pill {
+      color: #ffffff !important;
+    }
+  </style>
+
   <script>
     // Light/Dark theme preference
     (function() {
@@ -25,7 +121,9 @@
       <a href="/admin" class="{{ 'active' if request.url.path.startswith('/admin') else '' }}">Admin</a>
     </nav>
     <div class="top-actions">
-      <button id="themeToggle" title="Toggle theme">🌓</button>
+      <button id="themeToggle" class="dark-mode-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+        <span id="themeIcon">🌓</span>
+      </button>
     </div>
   </header>
 
@@ -39,10 +137,23 @@
   </footer>
 
   <script>
+    // Theme toggle + clock
+    function updateThemeIcon() {
+      const icon = document.getElementById('themeIcon');
+      if (icon) {
+        icon.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+      }
+    }
+    
     document.getElementById('themeToggle')?.addEventListener('click', () => {
       document.documentElement.classList.toggle('dark');
       localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+      updateThemeIcon();
     });
+    
+    // Initialize theme icon
+    updateThemeIcon();
+    
     function tickClock() {
       const el = document.getElementById('clock');
       if (!el) return;
@@ -52,6 +163,143 @@
     }
     setInterval(tickClock, 1000);
     tickClock();
+    
+    // Toast notification system
+    window.showToast = function(message, type = 'info', duration = 3000) {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      
+      // Trigger animation
+      setTimeout(() => toast.classList.add('show'), 10);
+      
+      // Auto remove
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => document.body.removeChild(toast), 300);
+      }, duration);
+    };
+  </script>
+
+  <!-- Category filtering / Search: works if your markup has:
+       - A container with id="categoryTabs" or class="category-tabs" or [data-role="category-bar"]
+         Inside it, each category button/anchor/tab has:
+           data-cat="coffee" (or data-category="coffee")
+       - Each item card has a data-category="coffee|tea|snacks" and optionally data-name="Espresso"
+       - Optional search input with id="itemSearch" or [data-role="item-search"]
+       This script is defensive and will no-op if those elements are absent. -->
+  <script>
+    (function () {
+      function qs(sel, root = document) { return root.querySelector(sel); }
+      function qsa(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
+      function getCatFromBtn(btn) {
+        return (btn.dataset.category || btn.dataset.cat || btn.getAttribute('data-cat') || btn.textContent || '')
+          .trim().toLowerCase();
+      }
+      function getCatFromItem(el) {
+        return (el.dataset.category || el.getAttribute('data-category') || el.dataset.cat || '').trim().toLowerCase();
+      }
+      function getNameFromItem(el) {
+        return (el.dataset.name || el.getAttribute('data-name') || el.textContent || '').trim().toLowerCase();
+      }
+      function show(el, visible) {
+        if (visible) {
+          el.style.display = el.dataset._disp || '';
+        } else {
+          if (!el.dataset._disp) el.dataset._disp = getComputedStyle(el).display || 'block';
+          el.style.display = 'none';
+        }
+      }
+
+      function initCategoryFiltering() {
+        const catBar =
+          qs('[data-role="category-bar"]') ||
+          qs('#categoryTabs') ||
+          qs('.category-tabs');
+
+        const buttons = catBar
+          ? qsa('button, a, [role="tab"], .tab, .btn', catBar).filter(b =>
+              b.hasAttribute('data-cat') || b.hasAttribute('data-category') || getCatFromBtn(b).length
+            )
+          : [];
+
+        const items = qsa('[data-item][data-category], .menu-item[data-category], .item-card[data-category], [data-category].menu-item, [data-category].item-card');
+        const search = qs('#itemSearch') || qs('[data-role="item-search"]');
+
+        if (!buttons.length && !items.length) return; // nothing to do
+
+        const state = {
+          category: null,
+          query: ''
+        };
+
+        function setActiveButton() {
+          if (!buttons.length) return;
+          buttons.forEach(btn => {
+            const isActive = getCatFromBtn(btn) === state.category ||
+                             (!state.category && /all/i.test(getCatFromBtn(btn)));
+            // Toggle a couple of common "active" classes
+            btn.classList.toggle('active', isActive);
+            btn.classList.toggle('btn-active', isActive);
+            btn.classList.toggle('tab-active', isActive);
+            // aria state if tabs are used
+            if (btn.getAttribute('role') === 'tab') {
+              btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            }
+          });
+        }
+
+        function applyFilter() {
+          items.forEach(el => {
+            const cat = getCatFromItem(el);
+            const name = getNameFromItem(el);
+            const matchCat = !state.category || state.category === 'all' || cat === state.category;
+            const matchQ = !state.query || name.includes(state.query);
+            show(el, matchCat && matchQ);
+          });
+        }
+
+        // Wire category buttons
+        buttons.forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            // If it's an anchor used only for filtering, prevent navigation
+            if (btn.tagName === 'A' && btn.getAttribute('href') === '#') e.preventDefault();
+            const chosen = getCatFromBtn(btn) || 'all';
+            state.category = chosen.toLowerCase();
+            setActiveButton();
+            applyFilter();
+          });
+        });
+
+        // Default category: use an explicit active/default, else first button, else 'all'
+        if (buttons.length) {
+          const explicit = buttons.find(b => b.classList.contains('active') || b.classList.contains('btn-active') || b.classList.contains('tab-active') || b.getAttribute('aria-selected') === 'true' || b.dataset.default === 'true');
+          state.category = (explicit ? getCatFromBtn(explicit) : getCatFromBtn(buttons[0]) || 'all').toLowerCase();
+        } else {
+          state.category = 'all';
+        }
+        setActiveButton();
+
+        // Wire search
+        if (search) {
+          search.addEventListener('input', () => {
+            state.query = (search.value || '').trim().toLowerCase();
+            applyFilter();
+          });
+        }
+
+        // Initial filter run
+        applyFilter();
+      }
+
+      // Run after DOM ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initCategoryFiltering);
+      } else {
+        initCategoryFiltering();
+      }
+    })();
   </script>
 </body>
 </html>

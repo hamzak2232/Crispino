@@ -553,3 +553,196 @@ def renumber_categories_and_items() -> None:
                 cur.execute("ALTER TABLE items_new RENAME TO items")
     finally:
         conn.close()
+
+
+def get_recent_orders(limit: int = 10) -> List[sqlite3.Row]:
+    """Get recent orders for order history."""
+    conn = connect()
+    try:
+        sql = """
+            SELECT o.*, 
+                   COUNT(oi.id) as item_count,
+                   GROUP_CONCAT(oi.name || ' x' || oi.qty, ', ') as items_summary
+            FROM orders o
+            LEFT JOIN order_items oi ON o.id = oi.order_id
+            GROUP BY o.id
+            ORDER BY o.created_at DESC
+            LIMIT ?
+        """
+        return list(conn.execute(sql, (limit,)))
+    finally:
+        conn.close()
+
+
+def get_daily_report(date: str = None) -> Dict[str, Any]:
+    """Get daily sales report for a specific date (YYYY-MM-DD format)."""
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
+    
+    conn = connect()
+    try:
+        # Get orders for the day
+        orders = list(conn.execute(
+            "SELECT * FROM orders WHERE DATE(created_at) = ? ORDER BY created_at",
+            (date,)
+        ))
+        
+        # Get item sales for the day
+        item_sales = list(conn.execute(
+            """
+            SELECT oi.name, oi.category_name, SUM(oi.qty) as total_qty, 
+                   SUM(oi.qty * oi.unit_price_cents) as total_revenue
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            WHERE DATE(o.created_at) = ?
+            GROUP BY oi.name, oi.category_name
+            ORDER BY total_revenue DESC
+            """,
+            (date,)
+        ))
+        
+        # Calculate totals
+        total_orders = len(orders)
+        total_revenue = sum(o["total_cents"] for o in orders)
+        total_tax = sum(o["tax_cents"] for o in orders)
+        
+        # Payment method breakdown
+        payment_methods = {}
+        for order in orders:
+            method = order["payment_method"]
+            payment_methods[method] = payment_methods.get(method, 0) + order["total_cents"]
+        
+        return {
+            "date": date,
+            "total_orders": total_orders,
+            "total_revenue_cents": total_revenue,
+            "total_tax_cents": total_tax,
+            "orders": orders,
+            "item_sales": item_sales,
+            "payment_methods": payment_methods
+        }
+    finally:
+        conn.close()
+
+
+def get_order_by_number(order_number: int) -> Optional[Tuple[Order, List[sqlite3.Row]]]:
+    """Get order by order number instead of ID."""
+    conn = connect()
+    try:
+        o = conn.execute("SELECT * FROM orders WHERE number=?", (order_number,)).fetchone()
+        if not o:
+            return None
+        items = list(conn.execute("SELECT * FROM order_items WHERE order_id=? ORDER BY id", (o["id"],)))
+        order = Order(
+            id=o["id"],
+            number=o["number"],
+            created_at=o["created_at"],
+            total_cents=o["total_cents"],
+            tax_cents=o["tax_cents"],
+            paid_cents=o["paid_cents"],
+            payment_method=o["payment_method"],
+            note=o["note"] or "",
+        )
+        return order, items
+    finally:
+        conn.close()
+
+
+def search_orders(query: str, limit: int = 20) -> List[sqlite3.Row]:
+    """Search orders by order number, customer note, or item names."""
+    conn = connect()
+    try:
+        sql = """
+            SELECT DISTINCT o.*, 
+                   COUNT(oi.id) as item_count,
+                   GROUP_CONCAT(oi.name || ' x' || oi.qty, ', ') as items_summary
+            FROM orders o
+            LEFT JOIN order_items oi ON o.id = oi.order_id
+            WHERE o.number LIKE ? OR o.note LIKE ? OR oi.name LIKE ?
+            GROUP BY o.id
+            ORDER BY o.created_at DESC
+            LIMIT ?
+        """
+        search_term = f"%{query}%"
+        return list(conn.execute(sql, (search_term, search_term, search_term, limit)))
+    finally:
+        conn.close()
+
+
+def get_popular_items(days: int = 7, limit: int = 10) -> List[sqlite3.Row]:
+    """Get most popular items in the last N days."""
+    conn = connect()
+    try:
+        sql = """
+            SELECT oi.name, oi.category_name, 
+                   SUM(oi.qty) as total_qty,
+                   SUM(oi.qty * oi.unit_price_cents) as total_revenue,
+                   COUNT(DISTINCT o.id) as order_count
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.created_at >= datetime('now', '-{} days')
+            GROUP BY oi.name, oi.category_name
+            ORDER BY total_qty DESC
+            LIMIT ?
+        """.format(days)
+        return list(conn.execute(sql, (limit,)))
+    finally:
+        conn.close()
+
+
+def backup_database(backup_path: str = None) -> str:
+    """Create a backup of the database."""
+    if backup_path is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = str(DATA_DIR / f"crispino_backup_{timestamp}.db")
+    
+    import shutil
+    shutil.copy2(DB_PATH, backup_path)
+    return backup_path
+
+
+def export_data(format: str = "json") -> str:
+    """Export all data in specified format."""
+    conn = connect()
+    try:
+        data = {
+            "export_date": now_iso(),
+            "settings": {},
+            "categories": [],
+            "items": [],
+            "orders": [],
+            "order_items": []
+        }
+        
+        # Export settings
+        for row in conn.execute("SELECT key, value FROM settings"):
+            data["settings"][row["key"]] = row["value"]
+        
+        # Export categories
+        for row in conn.execute("SELECT * FROM categories ORDER BY sort_order"):
+            data["categories"].append(dict(row))
+        
+        # Export items
+        for row in conn.execute("SELECT * FROM items ORDER BY sort_order"):
+            data["items"].append(dict(row))
+        
+        # Export orders
+        for row in conn.execute("SELECT * FROM orders ORDER BY created_at"):
+            data["orders"].append(dict(row))
+        
+        # Export order items
+        for row in conn.execute("SELECT * FROM order_items ORDER BY order_id, id"):
+            data["order_items"].append(dict(row))
+        
+        if format.lower() == "json":
+            import json
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            export_path = str(DATA_DIR / f"crispino_export_{timestamp}.json")
+            with open(export_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return export_path
+        else:
+            raise ValueError(f"Unsupported export format: {format}")
+            
+    finally:
+        conn.close()

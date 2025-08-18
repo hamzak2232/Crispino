@@ -1,9 +1,0 @@
-[2025-08-16 07:58:25] Failed to import app.main:
-[2025-08-16 07:58:25] Traceback (most recent call last):
-  File "launch.pyw", line 79, in run_server
-  File "C:\Users\Hamza\AppData\Local\Temp\_MEI503762\app\main.py", line 13, in <module>
-    from . import db
-  File "C:\Users\Hamza\AppData\Local\Temp\_MEI503762\app\db.py", line 4, in <module>
-    import sqlite3
-ModuleNotFoundError: No module named 'sqlite3'
-
