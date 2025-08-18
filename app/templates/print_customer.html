@@ -15,6 +15,13 @@
       const params = new URLSearchParams(window.location.search);
       const next = params.get('next');
       const back = params.get('back') || '/';
+      const orderNumber = params.get('order_number');
+      
+      // Store order number for reprint functionality
+      if (orderNumber) {
+        localStorage.setItem('last_order_number', orderNumber);
+      }
+      
       if (next) window.location.href = next;
       else window.location.href = back;
     }

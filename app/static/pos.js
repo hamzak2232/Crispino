@@ -19,6 +19,8 @@
   let cart = {}; // id -> {id, name, price_cents, qty}
   let lastTotalCents = 0;
   let cashWasAuto = false; // tracks whether the current cash value was auto-filled
+  let searchTimeout = null;
+  let allItems = []; // Cache all items for search
 
   function money(cents) { return 'Rs ' + (cents/100).toFixed(2); }
 
@@ -101,19 +103,47 @@
     id = Number(id);
     if (!cart[id]) { cart[id] = {id, name, price_cents, qty: 0}; }
     cart[id].qty += 1;
-    saveCart(); render();
+    saveCart(); 
+    render();
+    
+    // Show feedback
+    if (window.showToast) {
+      window.showToast(`Added ${name}`, 'success', 1000);
+    }
   }
+  
   function setQty(id, qty) {
     id = Number(id); qty = Math.max(0, qty || 0);
     if (!cart[id]) return;
     if (qty === 0) delete cart[id]; else cart[id].qty = qty;
     saveCart(); render();
   }
+  
   function removeItem(id) {
     id = Number(id);
-    if (cart[id]) { delete cart[id]; saveCart(); render(); }
+    if (cart[id]) { 
+      const itemName = cart[id].name;
+      delete cart[id]; 
+      saveCart(); 
+      render();
+      
+      // Show feedback
+      if (window.showToast) {
+        window.showToast(`Removed ${itemName}`, 'info', 1000);
+      }
+    }
   }
-  function clearCart() { cart = {}; saveCart(); render(); }
+  
+  function clearCart() { 
+    cart = {}; 
+    saveCart(); 
+    render();
+    
+    // Show feedback
+    if (window.showToast) {
+      window.showToast('Cart cleared', 'info', 1000);
+    }
+  }
 
   function toPaisa(rupeesStr) {
     const n = parseFloat(rupeesStr || '0');
@@ -123,7 +153,28 @@
 
   function checkout() {
     const lines = Object.values(cart).map(l => ({item_id: l.id, qty: l.qty}));
-    if (lines.length === 0) { alert('Cart is empty.'); return; }
+    if (lines.length === 0) { 
+      if (window.showToast) {
+        window.showToast('Cart is empty', 'error', 2000);
+      } else {
+        alert('Cart is empty.');
+      }
+      return; 
+    }
+    
+    // Validate cash payment
+    if (paySel.value === 'cash') {
+      const cashReceived = parseFloat(cashIn.value || '0');
+      if (cashReceived < lastTotalCents / 100) {
+        if (window.showToast) {
+          window.showToast('Insufficient cash received', 'error', 3000);
+        } else {
+          alert('Insufficient cash received');
+        }
+        return;
+      }
+    }
+    
     cartJsonEl.value = JSON.stringify(lines);
     formPay.value = paySel.value;
     if (paySel.value === 'cash' && (!cashIn.value || cashWasAuto)) {
@@ -131,6 +182,16 @@
     }
     formCash.value = String(toPaisa(cashIn.value));
     formNote.value = noteEl.value || '';
+    
+    // Show loading state
+    const checkoutBtn = document.getElementById('checkout');
+    if (checkoutBtn) {
+      checkoutBtn.disabled = true;
+      checkoutBtn.textContent = 'Processing...';
+    }
+    
+    // Order number will be stored by the print template after order creation
+    
     form.submit();
     clearCart();
   }
@@ -140,8 +201,14 @@
   const grids = Array.from(document.querySelectorAll('.items-grid'));
 
   function showCat(cat) {
-    tabEls.forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
-    grids.forEach(g => g.hidden = g.dataset.cat !== cat);
+    tabEls.forEach(b => {
+      const isActive = b.dataset.cat === cat;
+      b.classList.toggle('active', isActive);
+    });
+    grids.forEach(g => {
+      const shouldShow = g.dataset.cat === cat;
+      g.hidden = !shouldShow;
+    });
     localStorage.setItem('pos_last_cat', cat);
     filterCards(); // apply search filter for the visible cat
   }
@@ -152,7 +219,59 @@
   const lastCat = localStorage.getItem('pos_last_cat');
   const firstTab = tabEls[0];
   const startCat = (lastCat && tabEls.find(t => t.dataset.cat === lastCat)) ? lastCat : (firstTab ? firstTab.dataset.cat : null);
-  if (startCat) showCat(startCat);
+  
+  if (startCat) {
+    showCat(startCat);
+  }
+
+  // Cache all items for search
+  function cacheItems() {
+    allItems = Array.from(document.querySelectorAll('.item-btn')).map(btn => ({
+      id: btn.dataset.id,
+      name: btn.dataset.name,
+      price: Number(btn.dataset.price),
+      category: btn.dataset.cat,
+      element: btn
+    }));
+  }
+
+  // Enhanced search with debouncing
+  function enhancedSearch() {
+    const query = (searchIn.value || '').trim().toLowerCase();
+    
+    if (query.length < 2) {
+      // Show all items in current category
+      filterCards();
+      return;
+    }
+    
+    // Search across all items
+    allItems.forEach(item => {
+      const matches = item.name.toLowerCase().includes(query) || 
+                     item.category.toLowerCase().includes(query);
+      item.element.style.display = matches ? '' : 'none';
+    });
+    
+    // Show all categories that have matching items
+    const matchingCategories = new Set();
+    allItems.forEach(item => {
+      if (item.name.toLowerCase().includes(query)) {
+        matchingCategories.add(item.category);
+      }
+    });
+    
+    // Update tab visibility
+    tabEls.forEach(tab => {
+      const isVisible = matchingCategories.has(tab.dataset.cat);
+      tab.style.display = isVisible ? '' : 'none';
+    });
+    
+    // Show first matching category
+    const firstMatchingTab = tabEls.find(tab => matchingCategories.has(tab.dataset.cat));
+    if (firstMatchingTab && !firstMatchingTab.classList.contains('active')) {
+      showCat(firstMatchingTab.dataset.cat);
+    }
+  }
 
   // Wire item buttons
   document.querySelectorAll('.item-btn').forEach(btn => {
@@ -173,7 +292,7 @@
 
   cashIn.addEventListener('input', () => { cashWasAuto = false; updateChange(); });
 
-  // Search filter (current category)
+  // Enhanced search filter with debouncing
   function filterCards() {
     const q = (searchIn.value || '').trim().toLowerCase();
     const active = document.querySelector('.items-grid:not([hidden])');
@@ -185,13 +304,103 @@
       c.style.display = show ? '' : 'none';
     });
   }
-  searchIn.addEventListener('input', filterCards);
+  
+  searchIn.addEventListener('input', () => {
+    // Clear previous timeout
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    
+    // Debounce search
+    searchTimeout = setTimeout(() => {
+      if (searchIn.value.trim().length >= 2) {
+        enhancedSearch();
+      } else {
+        filterCards();
+      }
+    }, 300);
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Don't trigger shortcuts when typing in inputs
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+      return;
+    }
+    
+    // Ctrl/Cmd + Enter to checkout
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      checkout();
+    }
+    
+    // Escape to clear cart
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      clearCart();
+    }
+    
+    // Ctrl/Cmd + K to focus search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      searchIn.focus();
+    }
+    
+    // Number keys to quick add items (1-9)
+    if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey) {
+      const visibleItems = Array.from(document.querySelectorAll('.items-grid:not([hidden]) .item-btn'));
+      const index = parseInt(e.key) - 1;
+      if (visibleItems[index]) {
+        e.preventDefault();
+        const item = visibleItems[index];
+        addItem(item.dataset.id, item.dataset.name, Number(item.dataset.price));
+      }
+    }
+  });
 
   // Buttons
   document.getElementById('clear').addEventListener('click', clearCart);
   document.getElementById('checkout').addEventListener('click', checkout);
+  
+  // Reprint last order functionality
+  document.getElementById('reprintLast')?.addEventListener('click', () => {
+    const lastOrderNumber = localStorage.getItem('last_order_number');
+    if (lastOrderNumber) {
+      // First try to get the order by number to get the ID
+      fetch(`/api/orders/${lastOrderNumber}`)
+        .then(response => response.json())
+        .then(data => {
+          const orderId = data.order.id;
+          window.open(`/print/customer/${orderId}`, '_blank');
+          setTimeout(() => {
+            window.open(`/print/kitchen/${orderId}`, '_blank');
+          }, 1000);
+        })
+        .catch(() => {
+          if (window.showToast) {
+            window.showToast('Could not find order to reprint', 'error', 2000);
+          } else {
+            alert('Could not find order to reprint');
+          }
+        });
+    } else {
+      if (window.showToast) {
+        window.showToast('No recent order to reprint', 'error', 2000);
+      } else {
+        alert('No recent order to reprint');
+      }
+    }
+  });
 
-  // Init
+  // Initialize
   loadCart();
   render();
+  cacheItems();
+  
+  // Show welcome message
+  if (window.showToast && Object.keys(cart).length === 0) {
+    setTimeout(() => {
+      window.showToast('Welcome! Use Ctrl+K to search, Ctrl+Enter to checkout', 'info', 4000);
+    }, 1000);
+  }
 })();

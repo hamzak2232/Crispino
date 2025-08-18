@@ -4,13 +4,14 @@ import json
 import sys
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import db
+import db
 
 app = FastAPI(title="Crispino Cafe POS")
 
@@ -73,10 +74,15 @@ def checkout(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Get the order number for client-side tracking
+    order, _ = db.get_order(order_id)
+    
     next_url = request.url_for("print_kitchen", order_id=order_id)
     back_url = request.url_for("pos")
     customer_url = request.url_for("print_customer", order_id=order_id)
-    return RedirectResponse(f"{customer_url}?next={next_url}&back={back_url}", status_code=303)
+    
+    # Add order number to URL for client-side tracking
+    return RedirectResponse(f"{customer_url}?next={next_url}&back={back_url}&order_number={order.number}", status_code=303)
 
 
 @app.get("/print/customer/{order_id}", response_class=HTMLResponse)
@@ -208,3 +214,125 @@ def admin_settings(cafe_name: str = Form(...), tax_rate_percent: float = Form(..
 def admin_renumber(request: Request):
     db.renumber_categories_and_items()
     return RedirectResponse("/admin", status_code=303)
+
+
+# --- New API Endpoints ---
+
+@app.get("/api/orders/recent")
+def api_recent_orders(limit: int = 10):
+    """Get recent orders for order history."""
+    try:
+        orders = db.get_recent_orders(limit)
+        return {"orders": [dict(order) for order in orders]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/daily")
+def api_daily_report(date: str = None):
+    """Get daily sales report."""
+    try:
+        report = db.get_daily_report(date)
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orders/search")
+def api_search_orders(q: str, limit: int = 20):
+    """Search orders by number, note, or item names."""
+    try:
+        orders = db.search_orders(q, limit)
+        return {"orders": [dict(order) for order in orders]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orders/{order_number}")
+def api_get_order_by_number(order_number: int):
+    """Get order by order number."""
+    try:
+        result = db.get_order_by_number(order_number)
+        if not result:
+            raise HTTPException(status_code=404, detail="Order not found")
+        order, items = result
+        return {
+            "order": {
+                "id": order.id,
+                "number": order.number,
+                "created_at": order.created_at,
+                "total_cents": order.total_cents,
+                "tax_cents": order.tax_cents,
+                "paid_cents": order.paid_cents,
+                "payment_method": order.payment_method,
+                "note": order.note
+            },
+            "items": [dict(item) for item in items]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/items/popular")
+def api_popular_items(days: int = 7, limit: int = 10):
+    """Get most popular items in the last N days."""
+    try:
+        items = db.get_popular_items(days, limit)
+        return {"items": [dict(item) for item in items]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/backup")
+def api_create_backup():
+    """Create a database backup."""
+    try:
+        backup_path = db.backup_database()
+        return {"message": "Backup created successfully", "path": backup_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/export")
+def api_export_data(format: str = "json"):
+    """Export all data."""
+    try:
+        export_path = db.export_data(format)
+        return {"message": "Data exported successfully", "path": export_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- New Admin Pages ---
+
+@app.get("/admin/reports", response_class=HTMLResponse)
+def admin_reports(request: Request, date: str = None):
+    """Daily reports page."""
+    try:
+        report = db.get_daily_report(date)
+        cafe_name = db.get_setting("cafe_name") or "Crispino Cafe"
+        return templates.TemplateResponse(
+            "reports.html",
+            {"request": request, "report": report, "cafe_name": cafe_name, "date": date or datetime.now().strftime("%Y-%m-%d")},
+        )
+    except Exception as e:
+        return RedirectResponse(f"/admin?error={str(e)}", status_code=303)
+
+
+@app.get("/admin/history", response_class=HTMLResponse)
+def admin_history(request: Request, q: str = ""):
+    """Order history page."""
+    try:
+        if q:
+            orders = db.search_orders(q, 50)
+        else:
+            orders = db.get_recent_orders(50)
+        cafe_name = db.get_setting("cafe_name") or "Crispino Cafe"
+        return templates.TemplateResponse(
+            "history.html",
+            {"request": request, "orders": orders, "cafe_name": cafe_name, "search_query": q},
+        )
+    except Exception as e:
+        return RedirectResponse(f"/admin?error={str(e)}", status_code=303)
